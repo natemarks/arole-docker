@@ -1,0 +1,110 @@
+---
+- name: Ensure old versions of Docker are not installed.
+  package:
+    name:
+      - docker
+      - docker-engine
+    state: absent
+
+- name: Ensure dependencies are installed.
+  become: yes
+  apt:
+    name:
+      - apt-transport-https
+      - ca-certificates
+      - curl
+      - software-properties-common
+      - gnupg
+    state: present
+
+- name: Add Docker apt key.
+  become: yes
+  apt_key:
+    url: "{{ docker_apt_gpg_key }}"
+    id: 9DC858229FC7DD38854AE2D88D81803C0EBFCD88
+    state: present
+
+- name: Add Docker repository.
+  become: yes
+  apt_repository:
+    repo: "{{ docker_apt_repository }}"
+    state: present
+    update_cache: true
+
+- name: Install Docker.
+  become: yes
+  package:
+    name: "{{ docker_package }}"
+    state: "{{ docker_package_state }}"
+  notify: restart docker
+  ignore_errors: "{{ ansible_check_mode }}"
+
+- name: Ensure /etc/docker/ directory exists.
+  become: yes
+  file:
+    path: /etc/docker
+    state: directory
+    mode: 0755
+  when: docker_daemon_options.keys() | length > 0
+
+- name: Configure Docker daemon options.
+  become: yes
+  copy:
+    content: "{{ docker_daemon_options | to_nice_json }}"
+    dest: /etc/docker/daemon.json
+    mode: 0644
+  when: docker_daemon_options.keys() | length > 0
+  notify: restart docker
+
+- name: Ensure Docker is started and enabled at boot.
+  become: yes
+  service:
+    name: docker
+    state: "{{ docker_service_state }}"
+    enabled: "{{ docker_service_enabled }}"
+  ignore_errors: "{{ ansible_check_mode }}"
+
+- name: Ensure handlers are notified now to avoid firewall conflicts.
+  meta: flush_handlers
+
+
+- name: Check current docker-compose version.
+  command: "{{ docker_compose_path }} --version"
+  register: docker_compose_current_version
+  check_mode: false
+  changed_when: false
+  failed_when: false
+
+- name: Delete existing docker-compose version if it's different.
+  become: yes
+  file:
+    path: "{{ docker_compose_path }}"
+    state: absent
+  when: >
+    docker_compose_current_version.stdout is defined
+    and docker_compose_version not in docker_compose_current_version.stdout
+
+- name: Install Docker Compose (if configured).
+  become: yes
+  get_url:
+    url: "{{ docker_compose_url }}"
+    dest: "{{ docker_compose_path }}"
+    mode: 0755
+  when: >
+    docker_compose_current_version.stdout is not defined
+    or docker_compose_version not in docker_compose_current_version.stdout
+    
+- name: Ensure docker users are added to the docker group.
+  become: yes
+  user:
+    name: "{{ local_user }}"
+    groups: docker
+    append: true
+  when: local_user|length > 0
+
+#- name: Ensure docker users are added to the docker group.
+#  user:
+#    name: "{{ item }}"
+#    groups: docker
+#    append: true
+#  with_items: "{{ docker_users }}"

@@ -1,0 +1,6 @@
+---
+# file: webservers.yml
+- hosts: localhost
+  become: false
+  roles:
+    - role: $ROLE_DIR # role dir comes from the pipeline run_playbook script ROLE_DIR=$(pwd)
